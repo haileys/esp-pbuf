@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "esp-pbuf"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "embuild",
  "esp-idf-sys",

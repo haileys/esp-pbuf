@@ -1,6 +1,9 @@
 [package]
 name = "esp-pbuf"
-version = "0.0.0"
+version = "0.1.0"
+description = "safe bindings for esp-idf's pbuf api"
+license = "MIT"
+repository = "https://github.com/haileys/esp-pbuf"
 edition = "2021"
 
 [build-dependencies]
