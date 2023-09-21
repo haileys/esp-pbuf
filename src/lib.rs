@@ -2,7 +2,7 @@
 
 use core::mem;
 use core::ops::{Deref, DerefMut};
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::slice;
 
 pub mod sys;
@@ -110,5 +110,43 @@ impl Deref for PbufMut {
 impl DerefMut for PbufMut {
     fn deref_mut(&mut self) -> &mut Pbuf {
         &mut self.ptr
+    }
+}
+
+pub struct PbufUninit {
+    ptr: PbufPtr,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AllocatePbufError;
+
+impl PbufUninit {
+    pub fn allocate(layer: sys::pbuf_layer, length: usize, type_: sys::pbuf_type)
+        -> Result<Self, AllocatePbufError>
+    {
+        let length = u16::try_from(length).map_err(|_| AllocatePbufError)?;
+        let ptr = unsafe { sys::pbuf_alloc(layer, length, type_) };
+        let ptr = NonNull::new(ptr).ok_or(AllocatePbufError)?;
+        let ptr = unsafe { PbufPtr::new(ptr) };
+        Ok(PbufUninit { ptr })
+    }
+
+    pub fn zeroed(mut self) -> PbufMut {
+        unsafe {
+            ptr::write_bytes(self.bytes_mut_ptr(), 0, self.ptr.len());
+            self.assume_init()
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ptr.len()
+    }
+
+    pub fn bytes_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr.bytes_mut_ptr()
+    }
+
+    pub unsafe fn assume_init(self) -> PbufMut {
+        PbufMut { ptr: self.ptr }
     }
 }
