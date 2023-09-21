@@ -18,6 +18,9 @@ pub struct Pbuf {
     raw: sys::pbuf,
 }
 
+unsafe impl Send for Pbuf {}
+unsafe impl Sync for Pbuf {}
+
 impl Pbuf {
     pub fn from_ref(pbuf: &sys::pbuf) -> &Pbuf {
         // SAFETY: Pbuf is repr(transparent)
