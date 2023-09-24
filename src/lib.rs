@@ -1,5 +1,6 @@
 #![no_std]
 
+use core::alloc::Layout;
 use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::ptr::{self, NonNull};
@@ -118,17 +119,59 @@ pub struct PbufUninit {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct AllocatePbufError;
+pub enum AllocatePbufError {
+    /// pbuf uses u16 lengths internally, we return this error if the
+    /// requested packet length is too large:
+    LengthLargerThanU16,
+    /// pbuf_alloc returned null:
+    AllocationFailed,
+}
 
 impl PbufUninit {
-    pub fn allocate(layer: sys::pbuf_layer, length: usize, type_: sys::pbuf_type)
+    pub fn allocate(layer: sys::pbuf_layer, type_: sys::pbuf_type, length: usize)
         -> Result<Self, AllocatePbufError>
     {
-        let length = u16::try_from(length).map_err(|_| AllocatePbufError)?;
+        let length = u16::try_from(length)
+            .map_err(|_| AllocatePbufError::LengthLargerThanU16)?;
+
         let ptr = unsafe { sys::pbuf_alloc(layer, length, type_) };
-        let ptr = NonNull::new(ptr).ok_or(AllocatePbufError)?;
+
+        let ptr = NonNull::new(ptr)
+            .ok_or(AllocatePbufError::AllocationFailed)?;
+
         let ptr = unsafe { PbufPtr::new(ptr) };
         Ok(PbufUninit { ptr })
+    }
+
+    /// Like [`allocate`], but allows for alignment of payload buffer
+    /// to be controlled.
+    pub fn allocate_layout(layer: sys::pbuf_layer, type_: sys::pbuf_type, layout: Layout)
+        -> Result<Self, AllocatePbufError>
+    {
+        // pad allocation size to account for worst case:
+        let alloc_size = layout.size() + layout.align();
+
+        // allocate the pbuf with the padded allocation size:
+        let mut pbuf = Self::allocate(layer, type_, alloc_size)?;
+
+        // figure out how many bytes we need to adjust payload ptr by to
+        // achieve requested alignment:
+        let adjust = pbuf.bytes_mut_ptr().align_offset(layout.align());
+
+        // adjust the pbuf to requested alignment:
+        unsafe {
+            let pbuf = PbufPtr::as_mut_ptr(&pbuf.ptr);
+
+            // pbuf_remove_header increments the underlying ptr
+            // never fails in this use:
+            assert!(sys::pbuf_remove_header(pbuf, adjust) == 0);
+
+            // pbuf_realloc shrinks the underlying length fields without
+            // actually calling into the allocator:
+            sys::pbuf_realloc(pbuf, layout.size() as u16);
+        }
+
+        Ok(pbuf)
     }
 
     pub fn zeroed(mut self) -> PbufMut {
@@ -140,6 +183,16 @@ impl PbufUninit {
 
     pub fn len(&self) -> usize {
         self.ptr.len()
+    }
+
+    /// Initializes the pbuf from slice. Like `slice::copy_from_slice`, panics
+    /// on mismatched length:
+    pub fn copied_from_slice(mut self, slice: &[u8]) -> PbufMut {
+        assert!(slice.len() == self.len());
+        unsafe {
+            ptr::copy(slice.as_ptr(), self.bytes_mut_ptr(), self.len());
+            self.assume_init()
+        }
     }
 
     pub fn bytes_mut_ptr(&mut self) -> *mut u8 {
